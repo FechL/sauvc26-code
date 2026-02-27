@@ -10,7 +10,7 @@ from mavros_msgs.msg import PositionTarget
 from sauvc26_code.pid import PID
 
 SEND_LOG = True
-ROTATE_DURATION = 5.0
+ROTATE_SPEED = 0.3 # rad/s
 FORWARD_DURATION = 5.0
 TARGET_DEPTH = -0.8
 
@@ -171,7 +171,7 @@ class GuidedMove(Node):
                 else:
                     self.get_logger().info(f'[info] Diving, Current depth: {self.current_pose.pose.position.z:.2f}m, Target: {TARGET_DEPTH}m, vz={self.cmd.velocity.z:.2f}')
                         
-            case 1:  # Rotate dengan pattern: 90° → 180° → 90° → repeat
+            case 1: # Rotate
                 self.maintain_depth()
                 
                 if self.current_pose is None:
@@ -179,44 +179,46 @@ class GuidedMove(Node):
                 
                 current_yaw = self.get_yaw()
                 
-                # Initialize target yaw pada awal rotasi
+                # Initialize target yaw
                 if self.initial_yaw is None:
                     self.initial_yaw = current_yaw
                     
-                    # Tentukan target degree berdasarkan rotation count
+                    # Degree
                     if self.rotation_count % 3 == 0:
-                        target_deg = 90  # Rotasi pertama: 90°
+                        target_deg = 90
                     elif self.rotation_count % 3 == 1:
-                        target_deg = 180  # Rotasi kedua: 180° (balik arah)
-                    else:  # self.rotation_count % 3 == 2
-                        target_deg = 90  # Rotasi ketiga: 90°
+                        target_deg = 180
+                    else:
+                        target_deg = 90
                     
                     target_rad = math.radians(target_deg)
                     self.target_yaw = self.normalize_angle(self.initial_yaw + target_rad)
-                    self.get_logger().info(f'[info] Rotation #{self.rotation_count + 1}: {target_deg}° | current={math.degrees(current_yaw):.1f}°, target={math.degrees(self.target_yaw):.1f}°')
+                    self.get_logger().info(f'[info] Rotating,  current={math.degrees(current_yaw):.1f}°')
                 
-                # Hitung error angle
+                # Count error of angle
                 error = self.normalize_angle(self.target_yaw - current_yaw)
                 
                 # Threshold untuk menganggap rotasi selesai (5 derajat)
                 if abs(error) < math.radians(5.0):
-                    self.rotate(0.0)  # Stop rotation
-                    self.reset()  # Reset semua command
-                    self.initial_yaw = None  # Reset untuk rotasi berikutnya
-                    self.rotation_count += 1  # Increment rotation count
-                    self.state = 2
+                    # Reset
+                    self.rotate(0.0)
+                    self.reset()
+                    self.initial_yaw = None 
+                    
+                    self.rotation_count += 1 
+                    if self.rotation_count % 3 == 2:
+                        self.state = 2
                     self.state_start_time = current_time
                 else:
-                    # Set yaw rate berdasarkan error
-                    speed = 0.2  # rad/s
+                    speed = ROTATE_SPEED
                     
-                    # Slow down saat mendekati target
+                    # Slow down when close to the target using proportional control
                     if abs(error) < math.radians(30.0):
-                        yaw_rate = error * 0.5  # Proportional control
+                        yaw_rate = error * 0.5
                     else:
                         yaw_rate = speed if error > 0 else -speed
                     
-                    # Batasi yaw_rate
+                    # Limit yaw_rate
                     yaw_rate = max(-speed, min(speed, yaw_rate))
                     self.rotate(yaw_rate)
                     
