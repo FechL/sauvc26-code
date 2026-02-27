@@ -25,7 +25,8 @@ setup(
     entry_points={
         'console_scripts': [
             "test = sauvc26_code.test:main",
-            "move = sauvc26_code.move:main"
+            "move = sauvc26_code.move:main",
+            "arm = sauvc26_code.arm:main"
         ],
     },
 )
