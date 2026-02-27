@@ -73,7 +73,7 @@ class GuidedMove(Node):
         self.initial_yaw = None
         self.target_yaw = None
         self.rotation_complete = False
-        self.rotation_count = 0  # Track rotasi yang ke berapa
+        self.rotation_count = 0  # Track rotate
         
 
     def pose_callback(self, msg):
@@ -165,11 +165,10 @@ class GuidedMove(Node):
             case 0:  # Dive
                 self.maintain_depth()
                 if self.current_pose is not None and self.current_pose.pose.position.z < TARGET_DEPTH:
-                    self.get_logger().info(f'[info] Target depth reached: {self.current_pose.pose.position.z:.2f}m')
                     self.state = 1
                     self.state_start_time = current_time
                 else:
-                    self.get_logger().info(f'[info] Diving, Current depth: {self.current_pose.pose.position.z:.2f}m, Target: {TARGET_DEPTH}m, vz={self.cmd.velocity.z:.2f}')
+                    self.get_logger().info(f'[info] Diving')
                         
             case 1: # Rotate
                 self.maintain_depth()
@@ -205,9 +204,10 @@ class GuidedMove(Node):
                     self.reset()
                     self.initial_yaw = None 
                     
-                    self.rotation_count += 1 
                     if self.rotation_count % 3 == 2:
                         self.state = 2
+                    
+                    self.rotation_count += 1 
                     self.state_start_time = current_time
                 else:
                     speed = ROTATE_SPEED
@@ -220,6 +220,8 @@ class GuidedMove(Node):
                     
                     # Limit yaw_rate
                     yaw_rate = max(-speed, min(speed, yaw_rate))
+                    if self.rotation_count % 3 == 2:
+                        yaw_rate = speed if error > 0 else -speed
                     self.rotate(yaw_rate)
                     
             case 2:  # Forward
