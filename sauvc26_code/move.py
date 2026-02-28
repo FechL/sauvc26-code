@@ -11,7 +11,7 @@ from sauvc26_code.pid import PID
 
 SEND_LOG = True
 ROTATE_SPEED = 0.3 # rad/s
-FORWARD_DURATION = 5.0
+FORWARD_DURATION = 8.0
 TARGET_DEPTH = -0.8
 
 class GuidedMove(Node):
@@ -60,13 +60,14 @@ class GuidedMove(Node):
         # PID controller untuk depth (z-axis)
         self.depth_pid = PID(kp=0.5, ki=0.1, kd=0.2, setpoint=TARGET_DEPTH)
         
-        self.get_logger().info('[info] Mission started')
+        self.get_logger().info('Mission started')
         
         # Timer for publish velocity commands (10 Hz)
         self.timer = self.create_timer(0.1, self.send_cmd)
         
         # State machine
         self.state = 0
+        self.prev_state = 0
         self.state_start_time = self.get_clock().now()
         
         # Rotation tracking
@@ -110,18 +111,18 @@ class GuidedMove(Node):
     #     self.cmd.yaw = 0.0  # Maintain yaw
         
     def surface(self):
-        """Set velocity command untuk surfacing"""
+        """Set velocity command for surfacing"""
         self.cmd.velocity.x = 0.0
         self.cmd.velocity.y = 0.0
         self.cmd.velocity.z = -0.3
         self.cmd.yaw = 0.0
 
     def rotate(self, yaw_rate):
-        """Set velocity command untuk rotate (yaw_rate dalam rad/s)"""
+        """Set velocity command for rotate (yaw_rate in rad/s)"""
         self.cmd.yaw_rate = yaw_rate
         
     def forward(self):
-        """Set velocity command untuk forward (mengikuti heading kapal)"""
+        """Set velocity command for forward"""
         if self.current_pose is None:
             return
         
@@ -133,15 +134,15 @@ class GuidedMove(Node):
         self.cmd.velocity.x = speed * math.cos(yaw)  # North component
         self.cmd.velocity.y = speed * math.sin(yaw)  # East component
         self.cmd.velocity.z = 0.0
-    
+
     def reset(self):
-        """Set velocity command untuk berhenti"""
+        """Set velocity command for stop"""
         self.cmd.velocity.x = 0.0
         self.cmd.velocity.y = 0.0
         self.cmd.velocity.z = 0.0
         self.cmd.yaw = 0.0
         self.cmd.yaw_rate = 0.0
-    
+        
     def maintain_depth(self):
         """Menggunakan PID untuk mempertahankan kedalaman target"""
         if self.current_pose is not None:
@@ -168,9 +169,9 @@ class GuidedMove(Node):
                     self.state = 1
                     self.state_start_time = current_time
                 else:
-                    self.get_logger().info(f'[info] Diving')
+                    self.get_logger().info(f'Diving')
                         
-            case 1: # Rotate
+            case 1: # Scan
                 self.maintain_depth()
                 
                 if self.current_pose is None:
@@ -192,7 +193,7 @@ class GuidedMove(Node):
                     
                     target_rad = math.radians(target_deg)
                     self.target_yaw = self.normalize_angle(self.initial_yaw + target_rad)
-                    self.get_logger().info(f'[info] Rotating,  current={math.degrees(current_yaw):.1f}°')
+                    self.get_logger().info(f'Scanning')
                 
                 # Count error of angle
                 error = self.normalize_angle(self.target_yaw - current_yaw)
@@ -205,9 +206,11 @@ class GuidedMove(Node):
                     self.initial_yaw = None 
                     
                     if self.rotation_count % 3 == 2:
+                        self.prev_state = self.state
                         self.state = 2
                     
                     self.rotation_count += 1 
+                    
                     self.state_start_time = current_time
                 else:
                     speed = ROTATE_SPEED
@@ -230,11 +233,61 @@ class GuidedMove(Node):
                 if elapsed < FORWARD_DURATION:
                     self.forward()
                     if elapsed % 1 < 0.1:  # Log every 1s
-                        self.get_logger().info(f'[info] Moving forward')
+                        self.get_logger().info(f'Moving forward')
                 else:
                     self.reset()  # Reset
-                    self.state = 1
+                    if self.prev_state == 1:
+                        self.state = 3
+                    elif self.prev_state == 3:
+                        self.state = 1
                     self.state_start_time = current_time
+            
+            case 3: # u-turn
+                self.maintain_depth()
+                
+                if self.current_pose is None:
+                    return
+                
+                current_yaw = self.get_yaw()
+                
+                if self.initial_yaw is None:
+                    self.initial_yaw = current_yaw
+                    target_deg = 180
+                    target_rad = math.radians(target_deg)
+                    self.target_yaw = self.normalize_angle(self.initial_yaw + target_rad)
+                    self.get_logger().info(f'U-turning')
+                
+                error = self.normalize_angle(self.target_yaw - current_yaw)
+                
+                if abs(error) < math.radians(5.0):
+                    self.rotate(0.0)
+                    self.reset()
+                    self.initial_yaw = None 
+                    
+                    self.prev_state = self.state
+                    self.state = 2
+                    
+                    self.state_start_time = current_time
+                else:
+                    speed = ROTATE_SPEED
+                    
+                    if abs(error) < math.radians(30.0):
+                        yaw_rate = error * 0.5
+                    else:
+                        yaw_rate = speed if error > 0 else -speed
+                    
+                    yaw_rate = max(-speed, min(speed, yaw_rate))
+                    self.rotate(yaw_rate)
+                    
+            # case 4: # dive
+            
+            # case 5: # drop
+            
+            # case 6: # pickup
+            
+            # case 7: # surface
+                
+                
         
         # Set header timestamp
         self.cmd.header.stamp = current_time.to_msg()

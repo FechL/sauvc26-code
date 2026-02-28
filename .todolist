@@ -1,5 +1,6 @@
 # not yet
-- rotate 45, 90, 180 (u-turn), 360
+- buat jika rotatenya ada timeout biar tidak stuck
 - integrasi model vision
 - make emergency program
 # done
+- rotate 45, 90, 180 (u-turn), 360
