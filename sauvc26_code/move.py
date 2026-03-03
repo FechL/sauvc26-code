@@ -73,6 +73,7 @@ class GuidedMove(Node):
         # State machine
         self.state = 0
         self.prev_state = 0
+        self.rotate_state = 0
         self.state_start_time = self.get_clock().now()
         self.reset() # Set initial command ke STOP
         self.get_logger().info('Diving')
@@ -81,7 +82,6 @@ class GuidedMove(Node):
         self.initial_yaw = None
         self.target_yaw = None
         self.rotation_complete = False
-        self.rotation_count = 0  # Track rotate
 
     def pose_callback(self, msg):
         """Callback for current pose"""
@@ -139,27 +139,27 @@ class GuidedMove(Node):
     def change_state(self, new_state):
         """Change state"""
         self.reset()
-        self.rotation_count = 0
         self.initial_yaw = None
         self.prev_state = self.state
         self.state = new_state
         self.state_start_time = self.get_clock().now()
-        if (new_state == 0):
-            self.get_logger().info('Diving')
-        elif (new_state == 1):
-            self.get_logger().info('Scanning')
-        elif (new_state == 2):
-            self.get_logger().info('Moving forward')
-        elif (new_state == 3):
-            self.get_logger().info('Performing U-turn')
-        elif (new_state == 4):
-            self.get_logger().info('Tracking target')
-        # elif (new_state == 5):
-        #     self.get_logger().info('Dropping')
-        # elif (new_state == 6):
-        #     self.get_logger().info('Picking up')
-        # elif (new_state == 7):
-        #     self.get_logger().info('Surfacing')
+        if SEND_LOG_STATE and new_state != self.prev_state:
+            if (new_state == 0):
+                self.get_logger().info('Diving')
+            elif (new_state == 1):
+                self.get_logger().info('Scanning')
+            elif (new_state == 2):
+                self.get_logger().info('Moving forward')
+            elif (new_state == 3):
+                self.get_logger().info('Performing U-turn')
+            elif (new_state == 4):
+                self.get_logger().info('Tracking target')
+            # elif (new_state == 5):
+            #     self.get_logger().info('Dropping')
+            # elif (new_state == 6):
+            #     self.get_logger().info('Picking up')
+            # elif (new_state == 7):
+            #     self.get_logger().info('Surfacing')
     
     def reset(self):
         """Set velocity command for stop"""
@@ -213,31 +213,24 @@ class GuidedMove(Node):
                 
                 if self.initial_yaw is None: # Initialize target yaw
                     self.initial_yaw = current_yaw
-                    
-                    if self.rotation_count % 3 == 0:
-                        target_deg = 90
-                    elif self.rotation_count % 3 == 1:
-                        target_deg = -180  # Negative for clockwise rotation
-                    else:
-                        target_deg = 90
-                    
+                    target_deg = 90
                     target_rad = math.radians(target_deg)
                     self.target_yaw = self.normalize_angle(self.initial_yaw + target_rad)
                 
                 error = self.normalize_angle(self.target_yaw - current_yaw) # Count error of angle
                 
                 if abs(error) < math.radians(5.0): # Threshold for rotation complete (5 degrees)
-                    if self.rotation_count % 3 == 2:
+                    if self.rotate_state == 3:
                         self.change_state(2)
+                        self.rotate_state = 0
                     else:
-                        self.reset()
-                        self.initial_yaw = None
-                        self.rotation_count += 1 
+                        self.change_state(1)
+                        self.rotate_state += 1
                 
                 else:
                     speed = ROTATE_SPEED
                     
-                    if abs(error) < math.radians(30.0): # Slow down when close to the target using proportional control
+                    if abs(error) < math.radians(30.0) and self.rotate_state == 3: # Slow down when close to the target using proportional control
                         yaw_rate = error * 0.5
                     else:
                         yaw_rate = speed if error > 0 else -speed
@@ -271,7 +264,7 @@ class GuidedMove(Node):
                 
                 if self.initial_yaw is None:
                     self.initial_yaw = current_yaw
-                    target_deg = -180  # Negative for clockwise rotation
+                    target_deg = -180
                     target_rad = math.radians(target_deg)
                     self.target_yaw = self.normalize_angle(self.initial_yaw + target_rad)
                 
