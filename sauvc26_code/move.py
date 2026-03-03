@@ -9,8 +9,9 @@ from geometry_msgs.msg import Twist, PoseStamped, Point
 from mavros_msgs.msg import PositionTarget
 from sauvc26_code.pid import PID
 
-SEND_LOG = True
+SEND_LOG_STATE = True
 ROTATE_SPEED = 0.3 # rad/s
+FORWARD_SPEED = 0.3 # m/s
 FORWARD_DURATION = 8.0
 TARGET_DEPTH = -0.8
 COORD_GATE = 250
@@ -26,24 +27,20 @@ class GuidedMove(Node):
             10
         )
         
-        # QoS profile for MAVROS (BEST_EFFORT)
+        # QoS profile for MAVROS
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
             depth=10
         )
-        
-        # Subscriber pose
-        self.pose_sub = self.create_subscription(
+        self.pose_sub = self.create_subscription( # Subscriber pose
             PoseStamped,
             '/mavros/local_position/pose',
             self.pose_callback,
             qos_profile
         )
         self.current_pose = None
-        
-        # Subscriber for YOLO target coordinates
-        self.coord_sub = self.create_subscription(
+        self.coord_sub = self.create_subscription( # Subscriber for YOLO target coordinates
             Point,
             '/yolo_target_coord',
             self.coord_callback,
@@ -51,29 +48,23 @@ class GuidedMove(Node):
         )
         self.target_coord = None
         
-        # Initialize PositionTarget command BEFORE arming
+        # PositionTarget
         self.cmd = PositionTarget()
-        # Set frame ke LOCAL_NED - lebih reliable untuk ArduSub
-        self.cmd.coordinate_frame = PositionTarget.FRAME_LOCAL_NED
-        # Ignore position dan acceleration, gunakan velocity dan yaw
-        self.cmd.type_mask = (
+        self.cmd.coordinate_frame = PositionTarget.FRAME_LOCAL_NED # Set coordinate frame to LOCAL_NED (x=north, y=east, z=down)
+        self.cmd.type_mask = ( # Ignore position, acceleration, and yaw (use velocity and yaw_rate)
             PositionTarget.IGNORE_PX | 
             PositionTarget.IGNORE_PY | 
             PositionTarget.IGNORE_PZ |
             PositionTarget.IGNORE_AFX |
             PositionTarget.IGNORE_AFY |
             PositionTarget.IGNORE_AFZ |
-            PositionTarget.IGNORE_YAW  # Ignore yaw target, tapi gunakan yaw_rate
+            PositionTarget.IGNORE_YAW  # Ignore yaw target, use yaw_rate instead
         )
-        
-        # Set initial command ke STOP
-        self.reset()
-        
+                
         # PID controller
         self.depth_pid = PID(kp=0.5, ki=0.1, kd=0.2, setpoint=TARGET_DEPTH)
         self.target_pid = PID(kp=0.5, ki=0.1, kd=0.2, setpoint=COORD_GATE)
         
-        self.get_logger().info('Mission started')
         
         # Timer for publish velocity commands (10 Hz)
         self.timer = self.create_timer(0.1, self.send_cmd)
@@ -82,27 +73,34 @@ class GuidedMove(Node):
         self.state = 0
         self.prev_state = 0
         self.state_start_time = self.get_clock().now()
+        self.reset() # Set initial command ke STOP
+        self.get_logger().info('Mission started')
         
         # Rotation tracking
         self.initial_yaw = None
         self.target_yaw = None
         self.rotation_complete = False
         self.rotation_count = 0  # Track rotate
-        
+
+        # Logger
+    def state_logger(self, message, warn = False, important = False):
+        """Log state changes"""
+        if (self.prev_state != self.state or important) and SEND_LOG_STATE:
+            if warn:
+                self.get_logger().warn(message)
+            else:
+                self.get_logger().info(message)
 
     def pose_callback(self, msg):
-        """Callback untuk menerima data pose"""
+        """Callback for current pose"""
         self.current_pose = msg
     
     def coord_callback(self, msg):
-        """Callback untuk menerima koordinat target dari YOLO"""
+        """Callback from YOLO target coordinates"""
         self.target_coord = msg
-        # msg.x = center_x (pixel)
-        # msg.y = center_y (pixel)
-        # msg.z = area (pixel^2)
     
     def get_yaw(self):
-        """Mendapatkan yaw dari quaternion pose"""
+        """Get current yaw from pose"""
         if self.current_pose is None:
             return 0.0
         
@@ -116,26 +114,12 @@ class GuidedMove(Node):
         return yaw
     
     def normalize_angle(self, angle):
-        """Normalize angle ke range [-pi, pi]"""
+        """Normalize angle to [-pi, pi]"""
         while angle > math.pi:
             angle -= 2 * math.pi
         while angle < -math.pi:
             angle += 2 * math.pi
         return angle
-
-    # def dive(self):
-    #     """Set velocity command untuk diving"""
-    #     self.cmd.velocity.x = 0.0
-    #     self.cmd.velocity.y = 0.0
-    #     self.cmd.velocity.z = 0.3  # NED: positif = turun, pelan untuk kontrol lebih baik
-    #     self.cmd.yaw = 0.0  # Maintain yaw
-    
-    def info_logger(self, message, warn = False):
-        if self.prev_state != self.state and SEND_LOG:
-            if warn:
-                self.get_logger().warn(message)
-            else:
-                self.get_logger().info(message)
         
     def surface(self):
         """Set velocity command for surfacing"""
@@ -148,16 +132,14 @@ class GuidedMove(Node):
         """Set velocity command for rotate (yaw_rate in rad/s)"""
         self.cmd.yaw_rate = yaw_rate
         
-    def forward(self):
+    def forward(self, speed):
         """Set velocity command for forward"""
         if self.current_pose is None:
             return
         
         yaw = self.get_yaw()
-        speed = 0.2  # m/s
-        
-        # Konversi body frame (forward) ke local frame (north/east)
-        # Body forward (x) -> Local (x=north, y=east) berdasarkan yaw
+
+        # Convert forward speed to local frame using yaw, local NED frame: x = north, y = east, z = down
         self.cmd.velocity.x = speed * math.cos(yaw)  # North component
         self.cmd.velocity.y = speed * math.sin(yaw)  # East component
         self.cmd.velocity.z = 0.0
@@ -174,11 +156,8 @@ class GuidedMove(Node):
         """Menggunakan PID untuk mempertahankan kedalaman target"""
         if self.current_pose is not None:
             current_z = self.current_pose.pose.position.z
-            # PID compute akan menghitung output berdasarkan error
-            z_velocity = self.depth_pid.compute(current_z)
-            # Batasi kecepatan vertikal
-            z_velocity = max(-0.3, min(0.3, z_velocity))  # Kurangi dari 0.5 ke 0.3
-            # Langsung gunakan z_velocity (sudah dalam NED frame)
+            z_velocity = self.depth_pid.compute(current_z) # PID compute will count output based on error
+            z_velocity = max(-0.3, min(0.3, z_velocity))  # Limit velocity
             self.cmd.velocity.z = z_velocity
             
     def track_target(self):
@@ -200,13 +179,13 @@ class GuidedMove(Node):
                 
             case 0:  # Dive
                 self.maintain_depth()
-                self.info_logger('Diving')
+                self.state_logger('Diving')
                 if self.current_pose is not None and self.current_pose.pose.position.z < TARGET_DEPTH:
                     self.state = 1
                         
             case 1: # Scan
                 self.maintain_depth()
-                self.info_logger('Scanning')
+                self.state_logger('Scanning')
                 
                 if self.current_pose is None:
                     return
@@ -217,11 +196,9 @@ class GuidedMove(Node):
                 
                 current_yaw = self.get_yaw()
                 
-                # Initialize target yaw
-                if self.initial_yaw is None:
+                if self.initial_yaw is None: # Initialize target yaw
                     self.initial_yaw = current_yaw
                     
-                    # Degree
                     if self.rotation_count % 3 == 0:
                         target_deg = 90
                     elif self.rotation_count % 3 == 1:
@@ -232,13 +209,9 @@ class GuidedMove(Node):
                     target_rad = math.radians(target_deg)
                     self.target_yaw = self.normalize_angle(self.initial_yaw + target_rad)
                 
-                # Count error of angle
-                error = self.normalize_angle(self.target_yaw - current_yaw)
+                error = self.normalize_angle(self.target_yaw - current_yaw) # Count error of angle
                 
-                # Threshold untuk menganggap rotasi selesai (5 derajat)
-                if abs(error) < math.radians(5.0):
-                    # Reset
-                    self.rotate(0.0)
+                if abs(error) < math.radians(5.0): # Threshold for rotation complete (5 degrees)
                     self.reset()
                     self.initial_yaw = None 
                     
@@ -252,13 +225,11 @@ class GuidedMove(Node):
                 else:
                     speed = ROTATE_SPEED
                     
-                    # Slow down when close to the target using proportional control
-                    if abs(error) < math.radians(30.0):
+                    if abs(error) < math.radians(30.0): # Slow down when close to the target using proportional control
                         yaw_rate = error * 0.5
                     else:
                         yaw_rate = speed if error > 0 else -speed
                     
-                    # Limit yaw_rate
                     yaw_rate = max(-speed, min(speed, yaw_rate))
                     if self.rotation_count % 3 == 2:
                         yaw_rate = speed if error > 0 else -speed
@@ -266,7 +237,7 @@ class GuidedMove(Node):
                     
             case 2:  # Forward
                 self.maintain_depth()
-                self.info_logger('Moving forward')
+                self.state_logger('Moving forward')
                 
                 if self.target_coord is not None:
                     self.state = 4
@@ -274,7 +245,7 @@ class GuidedMove(Node):
                 
                 elapsed = (current_time - self.state_start_time).nanoseconds / 1e9
                 if elapsed < FORWARD_DURATION:
-                    self.forward()
+                    self.forward(FORWARD_SPEED)
                 else:
                     self.reset()  # Reset
                     if self.prev_state == 1:
@@ -285,7 +256,7 @@ class GuidedMove(Node):
             
             case 3: # u-turn
                 self.maintain_depth()
-                self.info_logger('Performing U-turn')
+                self.state_logger('Performing U-turn')
                 
                 if self.current_pose is None:
                     return
@@ -322,12 +293,14 @@ class GuidedMove(Node):
             case 4: # track
                 self.maintain_depth()
                 self.track_target()
-                self.info_logger('Tracking target')
+                self.state_logger('Tracking target')
                 
                 if self.target_coord is None:
                     self.reset()
                     self.state = 1
-                    self.info_logger('Lost target', warn=True)
+                    self.state_logger('Lost target', warn=True, important=True)
+                else:
+                    self.forward(FORWARD_SPEED)
                     
             # case 5: # drop
             
