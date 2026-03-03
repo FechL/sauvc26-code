@@ -153,7 +153,7 @@ class GuidedMove(Node):
         self.cmd.yaw_rate = 0.0
         
     def maintain_depth(self):
-        """Menggunakan PID untuk mempertahankan kedalaman target"""
+        """Using PID for maintaining target depth"""
         if self.current_pose is not None:
             current_z = self.current_pose.pose.position.z
             z_velocity = self.depth_pid.compute(current_z) # PID compute will count output based on error
@@ -161,12 +161,12 @@ class GuidedMove(Node):
             self.cmd.velocity.z = z_velocity
             
     def track_target(self):
-        if self.target_coord is None:
-            return
-        target_y = self.target_coord.y
-        y_velocity = self.target_pid.compute(target_y)
-        y_velocity = max(-0.2, min(0.2, y_velocity))
-        self.cmd.yaw_rate = y_velocity
+        """Using PID for tracking target in y-axis (image coordinate)"""
+        if self.target_coord is not None:
+            target_y = self.target_coord.y
+            y_velocity = self.target_pid.compute(target_y)
+            y_velocity = max(-0.2, min(0.2, y_velocity))
+            self.cmd.yaw_rate = y_velocity
     
     def send_cmd(self):
         current_time = self.get_clock().now()
