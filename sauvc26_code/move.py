@@ -4,6 +4,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 import time
 import math
+import sys
 
 from geometry_msgs.msg import Twist, PoseStamped, Point
 from mavros_msgs.msg import PositionTarget
@@ -318,6 +319,18 @@ class GuidedMove(Node):
 
 
 def main():
+    sleep_duration = 0
+    if len(sys.argv) > 1:
+        try:
+            sleep_duration = int(sys.argv[1])
+            print(f"Waiting {sleep_duration} seconds before starting...")
+            time.sleep(sleep_duration)
+        except ValueError:
+            print("Wrong argument, expected integer for sleep duration.")
+            return
+    else:
+        print("No argument, starting immediately.")
+    
     rclpy.init()
     node = GuidedMove()
     rclpy.spin(node)
