@@ -75,7 +75,7 @@ class GuidedMove(Node):
         self.prev_state = 0
         self.state_start_time = self.get_clock().now()
         self.reset() # Set initial command ke STOP
-        self.get_logger().info('Mission started')
+        self.get_logger().info('Diving')
         
         # Rotation tracking
         self.initial_yaw = None
@@ -180,19 +180,25 @@ class GuidedMove(Node):
                 
             case 0:  # Dive
                 self.maintain_depth()
-                self.state_logger('Diving')
+                # self.state_logger('Diving')
                 if self.current_pose is not None and self.current_pose.pose.position.z < TARGET_DEPTH:
                     self.state = 1
+                    self.get_logger().info('Scanning')
                         
             case 1: # Scan
                 self.maintain_depth()
-                self.state_logger('Scanning')
+                # self.state_logger('Scanning')
                 
                 if self.current_pose is None:
                     return
                 
                 if self.target_coord is not None:
+                    self.reset()
+                    self.initial_yaw = None
+                    self.rotation_count = 0
+                    self.prev_state = self.state
                     self.state = 4
+                    self.get_logger().info('Tracking target')
                     return
                 
                 current_yaw = self.get_yaw()
@@ -203,7 +209,7 @@ class GuidedMove(Node):
                     if self.rotation_count % 3 == 0:
                         target_deg = 90
                     elif self.rotation_count % 3 == 1:
-                        target_deg = 180
+                        target_deg = -180  # Negative for clockwise rotation
                     else:
                         target_deg = 90
                     
@@ -214,11 +220,12 @@ class GuidedMove(Node):
                 
                 if abs(error) < math.radians(5.0): # Threshold for rotation complete (5 degrees)
                     self.reset()
-                    self.initial_yaw = None 
-                    
+                    self.initial_yaw = None
                     if self.rotation_count % 3 == 2:
+                        self.rotation_count = 0
                         self.prev_state = self.state
                         self.state = 2
+                        self.get_logger().info('Moving forward')
                     
                     self.rotation_count += 1 
                     
@@ -232,32 +239,42 @@ class GuidedMove(Node):
                         yaw_rate = speed if error > 0 else -speed
                     
                     yaw_rate = max(-speed, min(speed, yaw_rate))
-                    if self.rotation_count % 3 == 2:
-                        yaw_rate = speed if error > 0 else -speed
                     self.rotate(yaw_rate)
                     
             case 2:  # Forward
                 self.maintain_depth()
-                self.state_logger('Moving forward')
+                # self.state_logger('Moving forward')
                 
                 if self.target_coord is not None:
+                    self.reset()
+                    self.initial_yaw = None
+                    self.rotation_count = 0
+                    self.prev_state = self.state
                     self.state = 4
+                    self.get_logger().info('Tracking target')
                     return
                 
                 elapsed = (current_time - self.state_start_time).nanoseconds / 1e9
                 if elapsed < FORWARD_DURATION:
                     self.forward(FORWARD_SPEED)
                 else:
-                    self.reset()  # Reset
+                    self.reset()
+                    self.initial_yaw = None
+                    self.rotation_count = 0
                     if self.prev_state == 1:
+                        self.prev_state = self.state
                         self.state = 3
+                        self.get_logger().info('Performing U-turn')
                     elif self.prev_state == 3:
+                        self.prev_state = self.state
                         self.state = 1
+                        self.get_logger().info('Scanning')
+
                     self.state_start_time = current_time
             
             case 3: # u-turn
                 self.maintain_depth()
-                self.state_logger('Performing U-turn')
+                # self.state_logger('Performing U-turn')
                 
                 if self.current_pose is None:
                     return
@@ -266,19 +283,20 @@ class GuidedMove(Node):
                 
                 if self.initial_yaw is None:
                     self.initial_yaw = current_yaw
-                    target_deg = 180
+                    target_deg = -180  # Negative for clockwise rotation
                     target_rad = math.radians(target_deg)
                     self.target_yaw = self.normalize_angle(self.initial_yaw + target_rad)
                 
                 error = self.normalize_angle(self.target_yaw - current_yaw)
                 
                 if abs(error) < math.radians(5.0):
-                    self.rotate(0.0)
                     self.reset()
-                    self.initial_yaw = None 
-                    
+                    self.state_start_time = current_time
+                    self.initial_yaw = None
+                    self.rotation_count = 0
                     self.prev_state = self.state
                     self.state = 2
+                    self.get_logger().info('Moving forward')
                     
                 else:
                     speed = ROTATE_SPEED
@@ -294,12 +312,17 @@ class GuidedMove(Node):
             case 4: # track
                 self.maintain_depth()
                 self.track_target()
-                self.state_logger('Tracking target')
+                # self.state_logger('Tracking target')
                 
                 if self.target_coord is None:
                     self.reset()
+                    self.initial_yaw = None
+                    self.rotation_count = 0
+                    self.prev_state = self.state
                     self.state = 1
-                    self.state_logger('Lost target', warn=True, important=True)
+                    # self.state_logger('Lost target', warn=True, important=True)
+                    self.get_logger().warn('Lost target')
+                    self.get_logger().info('Scanning')
                 else:
                     self.forward(FORWARD_SPEED)
                     

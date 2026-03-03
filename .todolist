@@ -1,6 +1,9 @@
 # not yet
 - buat jika rotatenya ada timeout biar tidak stuck
-- integrasi model vision
 - make emergency program
+- add readme
+- bashrc tamplate alias
+# in progress
+- integrasi model vision
 # done
 - rotate 45, 90, 180 (u-turn), 360
