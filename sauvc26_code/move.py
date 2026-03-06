@@ -187,10 +187,9 @@ class GuidedMove(Node):
         """Using PID for tracking target in x-axis (image coordinate)"""
         if self.target_coord is not None:
             target_x = self.target_coord.x
-            x_velocity = self.target_pid.compute(target_x)
-            x_velocity = -x_velocity  # Negate to correct direction
-            x_velocity = max(-0.2, min(0.2, x_velocity))
-            self.cmd.yaw_rate = x_velocity
+            yaw_rate = self.target_pid.compute(target_x)
+            yaw_rate = max(-0.2, min(0.2, yaw_rate))  # Limit yaw rate
+            self.cmd.yaw_rate = yaw_rate
     
     def send_cmd(self):
         current_time = self.get_clock().now()
@@ -299,27 +298,27 @@ class GuidedMove(Node):
                     self.change_state(1)
                     return
                 
-                # Check if target x coordinate has changed
-                current_target_x = self.target_coord.x
+                # # Check if target x coordinate has changed
+                # current_target_x = self.target_coord.x
                 
-                if self.last_target_x is None:
-                    # First time tracking
-                    self.last_target_x = current_target_x
-                    self.last_target_change_time = current_time
-                else:
-                    # Check if coordinate changed significantly (threshold 0.05)
-                    if abs(current_target_x - self.last_target_x) > 0.05:
-                        self.last_target_x = current_target_x
-                        self.last_target_change_time = current_time
-                    else:
-                        # Check if stuck for more than 2 seconds
-                        elapsed = (current_time - self.last_target_change_time).nanoseconds / 1e9
-                        if elapsed > 2.0:
-                            self.get_logger().warn('Lost target - coordinate stuck for 2 seconds')
-                            self.last_target_x = None
-                            self.last_target_change_time = None
-                            self.change_state(1)
-                            return
+                # if self.last_target_x is None:
+                #     # First time tracking
+                #     self.last_target_x = current_target_x
+                #     self.last_target_change_time = current_time
+                # else:
+                #     # Check if coordinate changed significantly (threshold 0.05)
+                #     if abs(current_target_x - self.last_target_x) > 0.05:
+                #         self.last_target_x = current_target_x
+                #         self.last_target_change_time = current_time
+                #     else:
+                #         # Check if stuck for more than 2 seconds
+                #         elapsed = (current_time - self.last_target_change_time).nanoseconds / 1e9
+                #         if elapsed > 2.0:
+                #             self.get_logger().warn('Lost target - coordinate stuck for 2 seconds')
+                #             self.last_target_x = None
+                #             self.last_target_change_time = None
+                #             self.change_state(1)
+                #             return
                 
                 self.track_target()
                 self.forward(FORWARD_SPEED)
