@@ -1,12 +1,15 @@
-# not yet
+# motion
 - buat rotatenya ada timeout biar tidak stuck
 - buat forwardnya memakai coordinate target dan PID
 - buat forwardnya ada timeout biar tidak stuck
 - make emergency program
 - add readme
-- bashrc tamplate alias
+# vision
+- publisher tiap object dari /yolo_target_coord/<qual_gate, final_gate, blue bucket, bucket, orange_flare, dll>
+- tiap publisher ada beberapa coordinate object jika yang ke deteksi 1 atau lebih dari 1, untuk  {x (horizontal), y (vertical), z (range)}
 # in progress
 - integrasi model vision
-- ganti scane state jadi 360
 # done
+- bashrc tamplate alias
 - rotate 45, 90, 180 (u-turn), 360
+- ganti scane state jadi 360

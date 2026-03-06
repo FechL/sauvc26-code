@@ -14,7 +14,7 @@ SEND_LOG_STATE = True
 ROTATE_SPEED = 0.3 # rad/s
 FORWARD_SPEED = 0.3 # m/s
 FORWARD_DURATION = 8.0
-TARGET_DEPTH = -0.8
+TARGET_DEPTH = -0.9
 COORD_GATE = 250
 
 class GuidedMove(Node):
@@ -178,12 +178,12 @@ class GuidedMove(Node):
             self.cmd.velocity.z = z_velocity
             
     def track_target(self):
-        """Using PID for tracking target in y-axis (image coordinate)"""
+        """Using PID for tracking target in x-axis (image coordinate)"""
         if self.target_coord is not None:
-            target_y = self.target_coord.y
-            y_velocity = self.target_pid.compute(target_y)
-            y_velocity = max(-0.2, min(0.2, y_velocity))
-            self.cmd.yaw_rate = y_velocity
+            target_x = self.target_coord.x
+            x_velocity = self.target_pid.compute(target_x)
+            x_velocity = max(-0.2, min(0.2, x_velocity))
+            self.cmd.yaw_rate = x_velocity
     
     def send_cmd(self):
         current_time = self.get_clock().now()
