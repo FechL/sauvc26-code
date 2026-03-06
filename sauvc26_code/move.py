@@ -15,7 +15,7 @@ ROTATE_SPEED = 0.3 # rad/s
 FORWARD_SPEED = 0.3 # m/s
 FORWARD_DURATION = 8.0
 TARGET_DEPTH = -0.9
-COORD_GATE = 250
+COORD_GATE = 0.0  # Center of normalized coordinates (-1 to 1)
 
 class GuidedMove(Node):
     def __init__(self):
@@ -182,6 +182,7 @@ class GuidedMove(Node):
         if self.target_coord is not None:
             target_x = self.target_coord.x
             x_velocity = self.target_pid.compute(target_x)
+            x_velocity = -x_velocity  # Negate to correct direction
             x_velocity = max(-0.2, min(0.2, x_velocity))
             self.cmd.yaw_rate = x_velocity
     
