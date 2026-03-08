@@ -87,6 +87,10 @@ class GuidedMove(Node):
         self.last_target_x = None
         self.last_target_change_time = None
         self.last_coord_time = None  # Track when last coordinate was received
+        
+        # Smooth yaw rate control
+        self.previous_yaw_rate = 0.0
+        self.max_yaw_acceleration = 0.1  # rad/s^2 - max change per iteration (0.1s)
 
     def pose_callback(self, msg):
         """Callback for current pose"""
@@ -177,6 +181,7 @@ class GuidedMove(Node):
         self.cmd.velocity.z = 0.0
         self.cmd.yaw = 0.0
         self.cmd.yaw_rate = 0.0
+        self.previous_yaw_rate = 0.0  # Reset smooth tracking
         
     def maintain_depth(self):
         """Using PID for maintaining target depth"""
@@ -190,9 +195,27 @@ class GuidedMove(Node):
         """Using PID for tracking target in x-axis (image coordinate)"""
         if self.target_coord is not None:
             target_x = self.target_coord.x
-            yaw_rate = self.target_pid.compute(target_x)
-            yaw_rate = max(-0.2, min(0.2, yaw_rate))  # Limit yaw rate
+            
+            # Deadzone to prevent oscillation near center
+            deadzone = 0.05
+            if abs(target_x) < deadzone:
+                target_x = 0.0
+            
+            # Compute desired yaw rate from PID
+            desired_yaw_rate = self.target_pid.compute(target_x)
+            desired_yaw_rate = max(-0.2, min(0.2, desired_yaw_rate))  # Limit yaw rate
+            
+            # Apply rate limiting for smooth acceleration
+            yaw_rate_diff = desired_yaw_rate - self.previous_yaw_rate
+            max_change = self.max_yaw_acceleration * 0.1  # 0.1s timer period
+            
+            if abs(yaw_rate_diff) > max_change:
+                yaw_rate = self.previous_yaw_rate + (max_change if yaw_rate_diff > 0 else -max_change)
+            else:
+                yaw_rate = desired_yaw_rate
+            
             self.cmd.yaw_rate = yaw_rate
+            self.previous_yaw_rate = yaw_rate
     
     def send_cmd(self):
         current_time = self.get_clock().now()
@@ -304,7 +327,7 @@ class GuidedMove(Node):
                 
                 # Check if coordinate hasn't been updated for too long (1 second)
                 time_since_last_coord = (current_time - self.last_coord_time).nanoseconds / 1e9
-                if time_since_last_coord > 1.0:
+                if time_since_last_coord > 3.0:
                     self.get_logger().warn(f'Lost target - no update for {time_since_last_coord:.2f}s')
                     self.change_state(1)
                     return
