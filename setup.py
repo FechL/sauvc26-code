@@ -27,6 +27,7 @@ setup(
             "test = sauvc26_code.test:main",
             "move = sauvc26_code.move:main",
             "arm = sauvc26_code.arm:main"
+            "qualification = sauvc26_code.qualification:main"
         ],
     },
 )
