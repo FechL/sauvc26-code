@@ -19,7 +19,7 @@ COORD_GATE = 0.0  # Center of normalized coordinates (-1 to 1)
 
 class GuidedMove(Node):
     def __init__(self):
-        super().__init__('move')
+        super().__init__('qualification')
 
         # Publisher velocity use PositionTarget for body frame
         self.vel_pub = self.create_publisher(
