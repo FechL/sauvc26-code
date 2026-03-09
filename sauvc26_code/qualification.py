@@ -11,7 +11,7 @@ from mavros_msgs.msg import PositionTarget
 from sauvc26_code.pid import PID
 
 SEND_LOG_STATE = True
-ROTATE_SPEED = 0.3 # rad/s
+ROTATE_SPEED = 0.6 # rad/s
 FORWARD_SPEED = 0.7 # m/s
 FORWARD_DURATION = 10.0 # s
 TARGET_DEPTH = -0.3 # m
@@ -125,7 +125,7 @@ class GuidedMove(Node):
         """Set velocity command for surfacing"""
         self.cmd.velocity.x = 0.0
         self.cmd.velocity.y = 0.0
-        self.cmd.velocity.z = -0.3
+        self.cmd.velocity.z = 0.3
         self.cmd.yaw = 0.0
 
     def rotate(self, yaw_rate):
@@ -147,10 +147,9 @@ class GuidedMove(Node):
         """Change state"""
         self.reset()
         self.initial_yaw = None
-        self.target_coord = None
+        # Keep `target_coord`/`last_coord_time` so that tracking can continue smoothly when re-entering the tracking state.
         self.last_target_x = None
         self.last_target_change_time = None
-        self.last_coord_time = None
         self.prev_state = self.state
         self.state = new_state
         self.state_start_time = self.get_clock().now()
@@ -267,7 +266,7 @@ class GuidedMove(Node):
             case 2:  # Forward
                 self.maintain_depth()
                 
-                if self.target_coord is not None and self.prev_state != 4:
+                if self.target_coord is not None and self.prev_state != 4 and self.prev_state != 3:
                     self.change_state(4)
                     return
                 
@@ -313,8 +312,14 @@ class GuidedMove(Node):
             case 4: # track
                 self.maintain_depth()
                 
+                # Ensure we have a recent target update before using its timestamp
+                if self.target_coord is None or self.last_coord_time is None:
+                    self.get_logger().warn('Lost target')
+                    self.change_state(1)
+                    return
+
                 time_since_last_coord = (current_time - self.last_coord_time).nanoseconds / 1e9
-                if self.target_coord is None or self.last_coord_time is None or time_since_last_coord > 3.0:
+                if time_since_last_coord > 3.0:
                     self.get_logger().warn('Lost target')
                     self.change_state(1)
                     return
