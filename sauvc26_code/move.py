@@ -12,8 +12,8 @@ from sauvc26_code.pid import PID
 
 SEND_LOG_STATE = True
 ROTATE_SPEED = 0.3 # rad/s
-FORWARD_SPEED = 0.3 # m/s
-FORWARD_DURATION = 8.0
+FORWARD_SPEED = 0.7 # m/s
+FORWARD_DURATION = 12
 TARGET_DEPTH = -0.3
 COORD_GATE = 0.0  # Center of normalized coordinates (-1 to 1)
 
@@ -273,7 +273,7 @@ class GuidedMove(Node):
             case 2:  # Forward
                 self.maintain_depth()
                 
-                if self.target_coord is not None:
+                if self.target_coord is not None and self.prev_state != 4:
                     self.change_state(4)
                     return
                 
@@ -281,7 +281,7 @@ class GuidedMove(Node):
                 if elapsed < FORWARD_DURATION:
                     self.forward(FORWARD_SPEED)
                 else:
-                    if self.prev_state == 1:
+                    if self.prev_state == 1 or self.prev_state == 4:
                         self.change_state(3)
                     elif self.prev_state == 3:
                         self.change_state(1)
@@ -319,6 +319,11 @@ class GuidedMove(Node):
             case 4: # track
                 self.maintain_depth()
                 
+                if self.target_coord is None:
+                    self.get_logger().warn('Lost target - coordinate is None')
+                    self.change_state(1)
+                    return
+                
                 # Check if coordinate topic is still publishing
                 if self.last_coord_time is None:
                     self.get_logger().warn('Lost target - no coordinate received')
@@ -332,13 +337,11 @@ class GuidedMove(Node):
                     self.change_state(1)
                     return
                 
-                if self.target_coord is None:
-                    self.get_logger().warn('Lost target - coordinate is None')
-                    self.change_state(1)
-                    return
-                
-                self.track_target()
-                self.forward(FORWARD_SPEED)
+                if self.target_coord.z > 0.02:
+                    self.change_state(2)
+                else:
+                    self.track_target()
+                    self.forward(FORWARD_SPEED)
                     
             # case 5: # drop
             
