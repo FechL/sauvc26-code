@@ -274,7 +274,9 @@ class GuidedMove(Node):
                 if elapsed < FORWARD_DURATION:
                     self.forward(FORWARD_SPEED)
                 else:
-                    if self.prev_state == 1 or self.prev_state == 4:
+                    if self.prev_state == 1: 
+                        self.change_state(1)
+                    if self.prev_state == 4:
                         self.change_state(3)
                     elif self.prev_state == 3:
                         self.change_state(5)

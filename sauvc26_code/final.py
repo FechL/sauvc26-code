@@ -83,6 +83,7 @@ class GuidedMove(Node):
         self.state_start_time = self.get_clock().now()
         self.reset() # Set initial command ke STOP
         self.get_logger().info('Diving')
+        self.current_task = 1
         
         # Rotation tracking
         self.initial_yaw = None
@@ -103,6 +104,7 @@ class GuidedMove(Node):
         self.obstacle_sway_distance = 1.0  # 1 meter sway target
         self.current_sway_velocity = 0.0  # Current sway velocity for smooth ramping
         self.max_sway_acceleration = 0.2  # m/s^2 - smooth sway acceleration
+        
 
     def pose_callback(self, msg):
         """Callback for current pose"""
@@ -305,7 +307,8 @@ class GuidedMove(Node):
                     self.change_state(4)
                     return
                 
-                if self.obstacle_coord.x > -0.1 and self.obstacle_coord.x < 0.1 and self.obstacle_coord.z > 0.02:
+                if self.obstacle_coord is not None and self.obstacle_coord.x > -0.1 and self.obstacle_coord.x < 0.1 and self.obstacle_coord.z > 0.04:
+                    self.get_logger().info('Obstacle detected, initiating sway')
                     self.change_state(6)
                     return
                 
@@ -314,8 +317,9 @@ class GuidedMove(Node):
                     self.forward(FORWARD_SPEED)
                 else:
                     if self.prev_state == 1:
-                        self.change_state(3)
+                        self.change_state(1)
                     elif self.prev_state == 4:
+                        self.current_task = 2
                         self.change_state(7)
 
             case 3: # u-turn
