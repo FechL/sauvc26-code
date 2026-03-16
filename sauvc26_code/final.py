@@ -16,6 +16,7 @@ FORWARD_SPEED = 0.7 # m/s
 FORWARD_DURATION = 10.0 # s
 TARGET_DEPTH = -0.3 # m
 COORD_GATE = 0.0
+COORD_DRUM = 0.0
 
 class GuidedMove(Node):
     def __init__(self):
@@ -41,20 +42,27 @@ class GuidedMove(Node):
             qos_profile
         )
         self.current_pose = None
-        self.coord_sub = self.create_subscription( # Subscriber for YOLO target coordinates
+        self.gate_coord_sub = self.create_subscription( # Subscriber for YOLO target coordinates
             Point,
-            '/yolo_target_coord',
-            self.coord_callback,
+            '/yolo_gate_coord',
+            self.gate_coord_callback,
             qos_profile
         )
-        self.target_coord = None
-        self.coord_sub = self.create_subscription( # Subscriber for YOLO obstacle coordinates
+        self.gate_coord = None
+        self.obstacle_coord_sub = self.create_subscription( # Subscriber for YOLO obstacle coordinates
             Point,
             '/yolo_obstacle_coord',
             self.obstacle_callback,
             qos_profile
         )
         self.obstacle_coord = None
+        self.drum_coord_sub = self.create_subscription( # Subscriber for YOLO drum coordinates
+            Point,
+            '/yolo_drum_coord',
+            self.drum_coord_callback,
+            qos_profile
+        )
+        self.drum_coord = None
         
         # PositionTarget
         self.cmd = PositionTarget()
@@ -71,7 +79,8 @@ class GuidedMove(Node):
                 
         # PID controller
         self.depth_pid = PID(kp=0.5, ki=0.1, kd=0.2, setpoint=TARGET_DEPTH)
-        self.target_pid = PID(kp=0.5, ki=0.1, kd=0.2, setpoint=COORD_GATE)
+        self.gate_pid = PID(kp=0.5, ki=0.1, kd=0.2, setpoint=COORD_GATE)
+        self.drum_pid = PID(kp=0.5, ki=0.1, kd=0.2, setpoint=COORD_DRUM)
         
         # Timer for publish velocity commands (10 Hz)
         self.timer = self.create_timer(0.1, self.send_cmd)
@@ -90,10 +99,15 @@ class GuidedMove(Node):
         self.target_yaw = None
         self.rotation_complete = False
         
-        # Target tracking for lost detection
-        self.last_target_x = None
-        self.last_target_change_time = None
-        self.last_coord_time = None  # Track when last coordinate was received
+        # Gate tracking for lost detection
+        self.last_gate_x = None
+        self.last_gate_change_time = None
+        self.last_gate_coord_time = None  # Track when last coordinate was received
+        
+        # Drum tracking for lost detection
+        self.last_drum_x = None
+        self.last_drum_change_time = None
+        self.last_drum_coord_time = None  # Track when last coordinate was received
         
         # Smooth yaw rate control
         self.previous_yaw_rate = 0.0
@@ -110,10 +124,15 @@ class GuidedMove(Node):
         """Callback for current pose"""
         self.current_pose = msg
     
-    def coord_callback(self, msg):
-        """Callback from YOLO target coordinates"""
-        self.target_coord = msg
-        self.last_coord_time = self.get_clock().now()  # Update timestamp
+    def gate_coord_callback(self, msg):
+        """Callback from YOLO gate coordinates"""
+        self.gate_coord = msg
+        self.last_gate_coord_time = self.get_clock().now()  # Update timestamp
+        
+    def drum_coord_callback(self, msg):
+        """Callback from YOLO drum coordinates"""
+        self.drum_coord = msg
+        self.last_drum_coord_time = self.get_clock().now()  # Update timestamp
         
     def obstacle_callback(self, msg):
         """Callback from YOLO obstacle coordinates"""
@@ -176,9 +195,9 @@ class GuidedMove(Node):
         """Change state"""
         self.reset()
         self.initial_yaw = None
-        # Keep `target_coord`/`last_coord_time` so that tracking can continue smoothly when re-entering the tracking state.
-        self.last_target_x = None
-        self.last_target_change_time = None
+        # Keep `gate_coord`/`last_gate_coord_time` so that tracking can continue smoothly when re-entering the tracking state.
+        self.last_gate_x = None
+        self.last_gate_change_time = None
         self.sway_start_y = None  # Reset sway state
         self.current_sway_velocity = 0.0  # Reset smooth sway velocity
         self.prev_state = self.state
@@ -221,18 +240,18 @@ class GuidedMove(Node):
             z_velocity = max(-0.3, min(0.3, z_velocity))  # Limit velocity
             self.cmd.velocity.z = z_velocity
             
-    def track_target(self):
+    def track_gate(self):
         """Using PID for tracking target in x-axis (image coordinate)"""
-        if self.target_coord is not None:
-            target_x = self.target_coord.x
+        if self.gate_coord is not None:
+            gate_x = self.gate_coord.x
             
             # Deadzone to prevent oscillation near center
             deadzone = 0.05
-            if abs(target_x) < deadzone:
-                target_x = 0.0
+            if abs(gate_x) < deadzone:
+                gate_x = 0.0
             
             # Compute desired yaw rate from PID
-            desired_yaw_rate = self.target_pid.compute(target_x)
+            desired_yaw_rate = self.gate_pid.compute(gate_x)
             desired_yaw_rate = max(-0.2, min(0.2, desired_yaw_rate))  # Limit yaw rate
             
             # Apply rate limiting for smooth acceleration
@@ -267,7 +286,7 @@ class GuidedMove(Node):
                 if self.current_pose is None:
                     return
                 
-                if self.target_coord is not None:
+                if self.gate_coord is not None:
                     self.change_state(4)
                     return
                 
@@ -303,7 +322,7 @@ class GuidedMove(Node):
             case 2:  # Forward
                 self.maintain_depth()
                 
-                if self.target_coord is not None and self.prev_state != 4 and self.prev_state != 3:
+                if self.gate_coord is not None and self.prev_state != 4 and self.prev_state != 3:
                     self.change_state(4)
                     return
                 
@@ -356,13 +375,13 @@ class GuidedMove(Node):
                 self.maintain_depth()
                 
                 # Ensure we have a recent target update before using its timestamp
-                if self.target_coord is None or self.last_coord_time is None:
+                if self.gate_coord is None or self.last_gate_coord_time is None:
                     self.get_logger().warn('Lost target')
                     self.change_state(1)
                     return
 
-                time_since_last_coord = (current_time - self.last_coord_time).nanoseconds / 1e9
-                if time_since_last_coord > 3.0:
+                time_since_last_gate_coord = (current_time - self.last_gate_coord_time).nanoseconds / 1e9
+                if time_since_last_gate_coord > 3.0:
                     self.get_logger().warn('Lost target')
                     self.change_state(1)
                     return
@@ -373,12 +392,12 @@ class GuidedMove(Node):
                     self.change_state(6)
                     return
                 
-                if self.target_coord.z > 0.02:
+                if self.gate_coord.z > 0.02:
                     self.change_state(2)
                     return
                 
                 
-                self.track_target()
+                self.track_gate()
                 self.forward(FORWARD_SPEED)
                     
             case 5: # surface
@@ -433,6 +452,28 @@ class GuidedMove(Node):
                 
             case 7: # drum
                 self.maintain_depth()
+                
+                # Ensure we have a recent target update before using its timestamp
+                if self.drum_coord is None or self.last_drum_coord_time is None:
+                    self.get_logger().warn('Lost target')
+                    self.change_state(1)
+                    return
+
+                time_since_last_drum_coord = (current_time - self.last_drum_coord_time).nanoseconds / 1e9
+                if time_since_last_drum_coord > 3.0:
+                    self.get_logger().warn('Lost target')
+                    self.change_state(1)
+                    return
+                
+                # Check for obstacle ahead
+                if self.obstacle_coord is not None and self.obstacle_coord.x > -0.1 and self.obstacle_coord.x < 0.1 and self.obstacle_coord.z > 0.04:
+                    self.get_logger().info('Obstacle detected, initiating sway')
+                    self.change_state(6)
+                    return
+                
+                if self.drum_coord.z > 0.02:
+                    self.change_state(2)
+                    return
             
                 
                 
