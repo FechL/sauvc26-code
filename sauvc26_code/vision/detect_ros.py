@@ -27,12 +27,11 @@ class YoloDetector(Node):
 
         # Publishers
         self.image_publisher_ = self.create_publisher(Image, '/yolo_result', 10)
-        
-        # 2. CREATE COORDINATE PUBLISHER
         self.coord_publisher_ = self.create_publisher(Point, '/yolo_target_coord', 10)
 
         self.bridge = CvBridge()
-        self.model = YOLO("best.pt")
+        # self.model = YOLO("best.pt")
+        self.model = YOLO("final_test.pt")
         self.get_logger().info("YOLO Node Initialized. Publishing Image and Coordinates.")
 
     def listener_callback(self, msg):
