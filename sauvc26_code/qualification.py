@@ -10,7 +10,6 @@ from geometry_msgs.msg import Twist, PoseStamped, Point
 from mavros_msgs.msg import PositionTarget
 from sauvc26_code.pid import PID
 
-SEND_LOG_STATE = True
 ROTATE_SPEED = 0.6 # rad/s
 FORWARD_SPEED = 0.7 # m/s
 FORWARD_DURATION = 10.0 # s
@@ -153,17 +152,19 @@ class GuidedMove(Node):
         self.prev_state = self.state
         self.state = new_state
         self.state_start_time = self.get_clock().now()
-        if SEND_LOG_STATE and new_state != self.prev_state:
+        if new_state != self.prev_state:
             if (new_state == 0):
                 self.get_logger().info('Diving')
             elif (new_state == 1):
                 self.get_logger().info('Scanning')
+                self.target_coord = None
             elif (new_state == 2):
                 self.get_logger().info('Moving forward')
             elif (new_state == 3):
                 self.get_logger().info('Performing U-turn')
             elif (new_state == 4):
                 self.get_logger().info('Tracking target')
+                self.last_coord_time = self.get_clock().now()
             elif (new_state == 5):
                 self.get_logger().info('Surfacing')
     
@@ -297,7 +298,7 @@ class GuidedMove(Node):
                 
                 error = self.normalize_angle(self.target_yaw - current_yaw)
                 
-                if abs(error) < math.radians(5.0):
+                if abs(error) < math.radians(5.0): 
                     self.change_state(2)
                     
                 else:
@@ -315,14 +316,14 @@ class GuidedMove(Node):
                 self.maintain_depth()
                 
                 # Ensure we have a recent target update before using its timestamp
-                if self.target_coord is None or self.last_coord_time is None:
-                    self.get_logger().warn('Lost target')
-                    self.change_state(1)
-                    return
+                # if self.target_coord is None or self.last_coord_time is None:
+                #     self.get_logger().warn('Target is none')
+                #     self.change_state(1)
+                #     return
 
                 time_since_last_coord = (current_time - self.last_coord_time).nanoseconds / 1e9
                 if time_since_last_coord > 3.0:
-                    self.get_logger().warn('Lost target')
+                    self.get_logger().warn(f'Lost target: {time_since_last_coord:.1f}s since last update')
                     self.change_state(1)
                     return
                 

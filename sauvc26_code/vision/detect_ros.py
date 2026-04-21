@@ -30,8 +30,8 @@ class YoloDetector(Node):
         self.coord_publisher_ = self.create_publisher(Point, '/yolo_target_coord', 10)
 
         self.bridge = CvBridge()
-        # self.model = YOLO("best.pt")
-        self.model = YOLO("final_test.pt")
+        self.model = YOLO("best.pt")
+        # self.model = YOLO("final_test.pt")
         self.get_logger().info("YOLO Node Initialized. Publishing Image and Coordinates.")
 
     def listener_callback(self, msg):
@@ -82,34 +82,36 @@ class YoloDetector(Node):
                         x_list.append(x)
                         y_list.append(y)
                         z_list.append(z)
-
+            
                 len_list = len(x_list)
 
-                x_sum += sum(x_list)
-                y_sum += sum(y_list)
-                z_sum += sum(z_list)
-                
-                # calculate center points
-                center_x = x_sum / len_list
-                center_y = y_sum / len_list
-                center_z = z_sum / len_list
-                
-                # publish coordinates
-                coord_msg = Point()
-                
-                normalized_x = (center_x - img_width / 2.0) / (img_width / 2.0) # normalize coordinates to -1 to 1 range
-                coord_msg.x = float(normalized_x)
-                normalized_y = (center_y - img_height / 2.0) / (img_height / 2.0)
-                coord_msg.y = float(normalized_y)
-                if (img_width * img_height) > 0:
-                    normalized_z = (center_z - 0) / (img_width * img_height - 0)  # Normalize z to 0-1 range
-                    coord_msg.z = float(normalized_z)
+                if len_list > 1:
 
-                self.coord_publisher_.publish(coord_msg)
-                self.get_logger().info(f"Published normalized coords: x={normalized_x:.3f}, y={normalized_y:.3f}, z={normalized_z:.3f}")
-                
-                # Draw a red dot at the center so you can see it in RQT
-                cv2.circle(annotated_frame, (int(center_x), int(center_y)), 5, (0, 0, 255), -1)
+                    x_sum += sum(x_list)
+                    y_sum += sum(y_list)
+                    z_sum += sum(z_list)
+                    
+                    # calculate center points
+                    center_x = x_sum / len_list
+                    center_y = y_sum / len_list
+                    center_z = z_sum / len_list
+                    
+                    # publish coordinates
+                    coord_msg = Point()
+                    
+                    normalized_x = (center_x - img_width / 2.0) / (img_width / 2.0) # normalize coordinates to -1 to 1 range
+                    coord_msg.x = float(normalized_x)
+                    normalized_y = (center_y - img_height / 2.0) / (img_height / 2.0)
+                    coord_msg.y = float(normalized_y)
+                    if (img_width * img_height) > 0:
+                        normalized_z = (center_z - 0) / (img_width * img_height - 0)  # Normalize z to 0-1 range
+                        coord_msg.z = float(normalized_z)
+
+                    self.coord_publisher_.publish(coord_msg)
+                    self.get_logger().info(f"Published normalized coords: x={normalized_x:.3f}, y={normalized_y:.3f}, z={normalized_z:.3f}")
+                    
+                    # Draw a red dot at the center so you can see it in RQT
+                    cv2.circle(annotated_frame, (int(center_x), int(center_y)), 5, (0, 0, 255), -1)
 
             # Publish the annotated image
             ros_msg = self.bridge.cv2_to_imgmsg(annotated_frame, encoding="bgr8")
