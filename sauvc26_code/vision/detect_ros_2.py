@@ -1,10 +1,12 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
+from std_msgs.msg import String
 from geometry_msgs.msg import Point
 from cv_bridge import CvBridge
 from ultralytics import YOLO
 import cv2
+import json
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 class YoloDetector(Node):
@@ -27,7 +29,7 @@ class YoloDetector(Node):
 
         # Publishers
         self.image_publisher_ = self.create_publisher(Image, '/yolo_result', 10)
-        self.coord_publisher_ = self.create_publisher(Point, '/yolo_target_coord', 10)
+        self.coord_publisher_ = self.create_publisher(String, '/yolo_target_coord', 10)
 
         self.bridge = CvBridge()
         self.model = YOLO("final_test.pt")
@@ -43,31 +45,28 @@ class YoloDetector(Node):
             annotated_frame = results[0].plot()
 
             det_count = len(results[0].boxes)
-            
-            if det_count > 0:
-                gate_boxes = []
+            all_objects_data = []
 
-                # 1. Kumpulkan semua koordinat deteksi yang bernama "gate" (tiang-tiangnya)
+            if det_count > 0:
+                grouped_boxes = {}
+
+                # 1. BOX GROUPING BERDASARKAN KELAS
                 for i in range(det_count):
                     class_id = int(results[0].boxes.cls[i].cpu().numpy())
                     class_name = self.model.names[class_id]
+                    box = results[0].boxes.xyxy[i].cpu().numpy() # [x1, y1, x2, y2]
 
-                    if class_name == "gate":
-                        box = results[0].boxes.xyxy[i].cpu().numpy()
-                        gate_boxes.append(box) # box berisi [x1, y1, x2, y2]
+                    if class_name not in grouped_boxes:
+                        grouped_boxes[class_name] = []
+                    grouped_boxes[class_name].append(box)
                 
                 # 2. Jika ada tiang gate yang terdeteksi (bisa 1 tiang atau 2 tiang)
-                if len(gate_boxes) > 0:
-                    # Cari batas paling ujung dari semua tiang untuk membuat 1 Kotak Gabungan
-                    x1_list = [b[0] for b in gate_boxes]
-                    y1_list = [b[1] for b in gate_boxes]
-                    x2_list = [b[2] for b in gate_boxes]
-                    y2_list = [b[3] for b in gate_boxes]
-
-                    min_x1 = min(x1_list) # Ujung paling kiri
-                    min_y1 = min(y1_list) # Ujung paling atas
-                    max_x2 = max(x2_list) # Ujung paling kanan
-                    max_y2 = max(y2_list) # Ujung paling bawah
+                for class_name, boxes in grouped_boxes.items():
+                    #cari threshold untuk menggabungkan box (misal 50% overlap)
+                    min_x1 = min(box[0] for box in boxes)
+                    min_y1 = min(box[1] for box in boxes)
+                    max_x2 = max(box[2] for box in boxes)
+                    max_y2 = max(box[3] for box in boxes)
 
                     # 3. Hitung Titik Tengah Sejati dari Kotak Gabungan
                     center_x = (min_x1 + max_x2) / 2.0
@@ -77,23 +76,24 @@ class YoloDetector(Node):
                     # 4. Normalisasi Koordinat (-1 sampai 1) sesuai kode awal
                     normalized_x = (center_x - img_width / 2.0) / (img_width / 2.0)
                     normalized_y = (center_y - img_height / 2.0) / (img_height / 2.0)
-                    normalized_z = 0.0
-                    if (img_width * img_height) > 0:
-                        normalized_z = area_z / (img_width * img_height)
+                    normalized_z = area_z / (img_width * img_height) if (img_width * img_height) > 0 else 0.0
+                    
+                    all_objects_data.append({
+                        'class': class_name,
+                        "x": round(float(normalized_x), 3),
+                        "y": round(float(normalized_y), 3),
+                        "z": round(float(normalized_z), 3)
+                    })
 
-                    # 5. Publish Data
-                    coord_msg = Point()
-                    coord_msg.x = float(normalized_x)
-                    coord_msg.y = float(normalized_y)
-                    coord_msg.z = float(normalized_z)
-                    self.coord_publisher_.publish(coord_msg)
-
-                    # --- VISUALISASI TAMBAHAN ---
-                    # Gambar kotak gabungan warna Hijau agar terlihat bahwa 2 tiang sudah menyatu
-                    cv2.rectangle(annotated_frame, (int(min_x1), int(min_y1)), (int(max_x2), int(max_y2)), (0, 255, 0), 3)
-                    # Gambar titik merah di tengah-tengahnya
+                    #Viz di openCV
                     cv2.circle(annotated_frame, (int(center_x), int(center_y)), 6, (0, 0, 255), -1)
 
+
+            #json msgs
+            json_msg = String()
+            json_msg.data = json.dumps(all_objects_data)
+            self.coord_publisher_.publish(json_msg)
+                
             # Publish gambar akhir ke RQT
             ros_msg = self.bridge.cv2_to_imgmsg(annotated_frame, encoding="bgr8")
             self.image_publisher_.publish(ros_msg)
