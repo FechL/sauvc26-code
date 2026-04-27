@@ -264,7 +264,7 @@ class GuidedMove(Node):
                     yaw_rate = max(-speed, min(speed, yaw_rate))
                     self.rotate(yaw_rate)
                     
-            case 2:  # Forward
+            case 2: # Forward
                 self.maintain_depth()
                 
                 if self.target_coord is not None and self.prev_state != 4 and self.prev_state != 3:
