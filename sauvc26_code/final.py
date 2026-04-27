@@ -118,6 +118,10 @@ class GuidedMove(Node):
         self.current_sway_velocity = 0.0  # Current sway velocity for smooth ramping
         self.max_sway_acceleration = 0.2  # m/s^2 - smooth sway acceleration
         
+        # Scan tracking
+        self.scan_stage = 0  # 0: rotate to opposite, 1: rotate back to original
+        self.scan_return_target = None  # Target yaw to return to
+        
 
     def pose_callback(self, msg):
         """Callback for current pose"""
@@ -224,6 +228,8 @@ class GuidedMove(Node):
 
         self.sway_start_y = None  # Reset sway state
         self.current_sway_velocity = 0.0  # Reset smooth sway velocity
+        self.scan_stage = 0  # Reset scan stage
+        self.scan_return_target = None  # Reset scan return target
         self.prev_state = self.state
         self.state = new_state
         self.state_start_time = self.get_clock().now()
@@ -319,8 +325,8 @@ class GuidedMove(Node):
             case 1: # Scan
                 self.maintain_depth()
                 
-                # if self.current_pose is None:
-                #     return
+                if self.current_pose is None:
+                    return
                 
                 if self.gate_coord is not None:
                     self.change_state(4)
@@ -328,32 +334,46 @@ class GuidedMove(Node):
                 
                 current_yaw = self.get_yaw()
                 
+                # Tahap 1: Set initial_yaw dan target untuk stage pertama (rotate ke opposite)
                 if self.initial_yaw is None:
                     self.initial_yaw = current_yaw
-                    target_deg = 90
-                    target_rad = math.radians(target_deg)
-                    self.target_yaw = self.normalize_angle(self.initial_yaw + target_rad)
+                    self.scan_return_target = current_yaw  # Save target untuk kembali nanti
+                    self.target_yaw = self.normalize_angle(current_yaw + math.pi)  # Opposite direction (180 derajat)
+                    self.scan_stage = 0
                 
-                error = self.normalize_angle(self.target_yaw - current_yaw) # Count error of angle
+                error = self.normalize_angle(self.target_yaw - current_yaw)
                 
-                if abs(error) < math.radians(5.0): # Threshold for rotation complete (5 degrees)
-                    if self.rotate_state == 3:
+                # Stage 0: Rotate ke opposite direction
+                if self.scan_stage == 0:
+                    if abs(error) < math.radians(5.0):
+                        # Sudah sampai opposite direction, sekarang ke stage 1
+                        self.scan_stage = 1
+                        self.target_yaw = self.scan_return_target  # Set target balik ke original
+                        self.get_logger().info('Scan stage 1: rotating back to original yaw')
+                    else:
+                        speed = ROTATE_SPEED
+                        if abs(error) < math.radians(30.0):
+                            yaw_rate = error * 0.5
+                        else:
+                            yaw_rate = speed if error > 0 else -speed
+                        yaw_rate = max(-speed, min(speed, yaw_rate))
+                        self.rotate(yaw_rate)
+                
+                # Stage 1: Rotate balik ke original_yaw
+                elif self.scan_stage == 1:
+                    error = self.normalize_angle(self.target_yaw - current_yaw)
+                    if abs(error) < math.radians(5.0):
+                        # Sudah kembali ke original_yaw, scan selesai
+                        self.get_logger().info('Scan complete, returned to original yaw')
                         self.change_state(2)
-                        self.rotate_state = 0
                     else:
-                        self.change_state(1)
-                        self.rotate_state += 1
-                
-                else:
-                    speed = ROTATE_SPEED
-                    
-                    if abs(error) < math.radians(30.0) and self.rotate_state == 3: # Slow down when close to the target using proportional control
-                        yaw_rate = error * 0.5
-                    else:
-                        yaw_rate = speed if error > 0 else -speed
-                    
-                    yaw_rate = max(-speed, min(speed, yaw_rate))
-                    self.rotate(yaw_rate)
+                        speed = ROTATE_SPEED
+                        if abs(error) < math.radians(30.0):
+                            yaw_rate = error * 0.5
+                        else:
+                            yaw_rate = speed if error > 0 else -speed
+                        yaw_rate = max(-speed, min(speed, yaw_rate))
+                        self.rotate(yaw_rate)
                     
             case 2: # Forward
                 self.maintain_depth()
@@ -415,11 +435,6 @@ class GuidedMove(Node):
             case 4: # track gate
                 self.maintain_depth()
                 
-                # Ensure we have a recent target update before using its timestamp
-                # if self.gate_coord is None or self.last_gate_coord_time is None:
-                #     self.get_logger().warn('Lost target')
-                #     self.change_state(1)
-                #     return
                 if self.gate_coord is not None:
                     self.last_gate = self.gate_coord
                     self.last_gate_change_time = self.get_clock().now()
