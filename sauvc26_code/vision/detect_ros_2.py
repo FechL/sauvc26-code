@@ -41,7 +41,7 @@ class YoloDetector(Node):
             img_height, img_width = cv_image.shape[:2]
             
             # Run Inference
-            results = self.model(cv_image, verbose=False, conf=0.1)
+            results = self.model(cv_image, verbose=False, conf=0.75)
             annotated_frame = results[0].plot()
 
             det_count = len(results[0].boxes)
