@@ -85,6 +85,7 @@ class GuidedMove(Node):
         self.state = 0
         self.prev_state = 0
         self.rotate_state = 0
+        self.original_yaw = self.get_yaw()
         self.state_start_time = self.get_clock().now()
         self.reset() # Set initial command ke STOP
         self.get_logger().info('Diving')
@@ -99,6 +100,8 @@ class GuidedMove(Node):
         self.last_gate = None
         self.last_gate_change_time = None
         self.last_gate_coord_time = None  # Track when last coordinate was received
+        self.close_to_gate = False
+        self.deadzone_gate = False
         
         # Drum tracking for lost detection
         self.last_drum_x = None
@@ -216,6 +219,9 @@ class GuidedMove(Node):
         self.initial_yaw = None
         # Keep `gate_coord`/`last_gate_coord_time` so that tracking can continue smoothly when re-entering the tracking state.
         self.last_gate_change_time = None
+        self.close_to_gate = False
+        self.deadzone_gate = False
+
         self.sway_start_y = None  # Reset sway state
         self.current_sway_velocity = 0.0  # Reset smooth sway velocity
         self.prev_state = self.state
@@ -275,6 +281,9 @@ class GuidedMove(Node):
         if abs(gate_x) < deadzone:
             gate_x = 0.0
             self.gate_pid.integral = 0.0  # Reset integral term in deadzone to prevent windup
+            self.deadzone_gate = True
+        else:
+            self.deadzone_gate = False
         
         # Compute desired yaw rate from PID
         desired_yaw_rate = self.gate_pid.compute(gate_x)
@@ -362,7 +371,7 @@ class GuidedMove(Node):
 
                 duration = FORWARD_DURATION_SCAN if self.prev_state == 1 or self.prev_state == 0 else FORWARD_DURATION_GATE
                 if elapsed < duration:
-                    if self.prev_state == 1 or self.prev_state == 0:
+                    if self.prev_state == 1 or self.prev_state == 0 or self.prev_state == 6:
                         self.forward(FORWARD_SPEED_SCAN)
                     elif self.prev_state == 4:
                         self.forward(FORWARD_SPEED_GATE)
@@ -428,13 +437,17 @@ class GuidedMove(Node):
                     self.change_state(6)
                     return
                 
-                if self.gate_coord is not None and self.gate_coord.z > 0.15:
-                    self.change_state(2)
-                    return
-                
+                if self.close_to_gate:
+                    if self.deadzone_gate:
+                        self.get_logger().info('Close to gate and centered, moving forward')
+                        self.change_state(2)
+                else:
+                    self.forward(FORWARD_SPEED_TRACK)
+                    if self.gate_coord is not None and self.gate_coord.z > 0.15:
+                        self.close_to_gate = True
+                        self.reset()
 
                 self.track_gate()
-                self.forward(FORWARD_SPEED_TRACK)
                     
             case 5: # surface
                 self.surface()
@@ -451,7 +464,7 @@ class GuidedMove(Node):
                 # Check if sway duration completed
                 if elapsed >= sway_duration:
                     self.get_logger().info(f'Sway complete: {elapsed:.2f}s, returning to scan')
-                    self.change_state(1)
+                    self.change_state(2)
                     return
                 
                 # Smooth velocity ramping with proportional deceleration near end time
