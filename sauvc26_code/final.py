@@ -57,7 +57,7 @@ class GuidedMove(Node):
         self.obstacle_coord = None
         self.drum_coord = None
         self.last_gate_time = None
-        self.last_obstacle_coord_time = None
+        self.last_obstacle_time = None
         self.last_drum_time = None
         
         # PositionTarget
@@ -157,7 +157,7 @@ class GuidedMove(Node):
                 # elif class_name == 'Obstacle':
                 elif class_name == 'Yellow Flare': # Sementara namanya Yellow Flare
                     self.obstacle_coord = point
-                    self.last_obstacle_coord_time = current_time
+                    self.last_obstacle_time = current_time
                 elif class_name == 'Blue Bucket':
                     self.drum_coord = point
                     self.last_drum_time = current_time
@@ -228,8 +228,8 @@ class GuidedMove(Node):
         self.close_to_gate = False
         self.deadzone_gate = False
         # self.last_drum_change_time = None
-        self.close_to_gate = False
-        self.deadzone_gate = False
+        self.close_to_drum = False
+        self.deadzone_drum = False
 
         self.previous_yaw_rate = 0.0  # Reset smooth tracking
 
