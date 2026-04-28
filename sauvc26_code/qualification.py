@@ -5,20 +5,22 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 import time
 import math
 import sys
+import json
 
 from geometry_msgs.msg import Twist, PoseStamped, Point
+from std_msgs.msg import String
 from mavros_msgs.msg import PositionTarget
 from sauvc26_code.pid import PID
 
-ROTATE_SPEED = 0.6 # rad/s
-FORWARD_SPEED = 0.7 # m/s
-FORWARD_DURATION = 10.0 # s
+ROTATE_SPEED = 1.0 # rad/s
+FORWARD_SPEED_SCAN = 0.7 # m/s
+FORWARD_SPEED_GATE = 0.7 # m/s
+FORWARD_DURATION_GATE = 7.0 # s
 TARGET_DEPTH = -0.3 # m
-COORD_GATE = 0.0
 
 class GuidedMove(Node):
     def __init__(self):
-        super().__init__('qualification')
+        super().__init__('final')
 
         # Publisher velocity use PositionTarget for body frame
         self.vel_pub = self.create_publisher(
@@ -39,14 +41,12 @@ class GuidedMove(Node):
             self.pose_callback,
             qos_profile
         )
-        self.current_pose = None
-        self.coord_sub = self.create_subscription( # Subscriber for YOLO target coordinates
-            Point,
+        self.coord_sub = self.create_subscription( # Subscriber for YOLO target coordinates (JSON format)
+            String,
             '/yolo_target_coord',
             self.coord_callback,
             qos_profile
         )
-        self.target_coord = None
         
         # PositionTarget
         self.cmd = PositionTarget()
@@ -63,42 +63,66 @@ class GuidedMove(Node):
                 
         # PID controller
         self.depth_pid = PID(kp=0.5, ki=0.1, kd=0.2, setpoint=TARGET_DEPTH)
-        self.target_pid = PID(kp=0.5, ki=0.1, kd=0.2, setpoint=COORD_GATE)
+        self.gate_pid = PID(kp=0.5, ki=0.1, kd=0.2, setpoint=0.0)
         
         # Timer for publish velocity commands (10 Hz)
         self.timer = self.create_timer(0.1, self.send_cmd)
         
         # State machine
-        self.state = 0
-        self.prev_state = 0
-        self.rotate_state = 0
+        self.state = 1
+        self.prev_state = 1
         self.state_start_time = self.get_clock().now()
-        self.reset() # Set initial command ke STOP
-        self.get_logger().info('Diving')
         
         # Rotation tracking
+        self.current_pose = None
         self.initial_yaw = None
         self.target_yaw = None
-        self.rotation_complete = False
-        
-        # Target tracking for lost detection
-        self.last_target_x = None
-        self.last_target_change_time = None
-        self.last_coord_time = None  # Track when last coordinate was received
-        
-        # Smooth yaw rate control
         self.previous_yaw_rate = 0.0
-        self.max_yaw_acceleration = 0.1  # rad/s^2 - max change per iteration (0.1s)
+        self.max_yaw_acceleration = 0.1
+        
+        # Gate tracking
+        self.gate_coord = None
+        self.last_gate_coord = None
+        self.last_gate_time = None
+        self.close_to_gate = False
+        self.deadzone_gate = False
+        self.forward_to_gate = False
+        
+        self.change_state(1)
 
     def pose_callback(self, msg):
         """Callback for current pose"""
         self.current_pose = msg
     
     def coord_callback(self, msg):
-        """Callback from YOLO target coordinates"""
-        self.target_coord = msg
-        self.last_coord_time = self.get_clock().now()  # Update timestamp
-    
+        """Callback from YOLO target coordinates - parses JSON with all detections"""
+        try:
+            detections = json.loads(msg.data)
+            current_time = self.get_clock().now()
+            
+            # Reset detection flags
+            self.gate_coord = None
+            
+            # Parse detections by class
+            for detection in detections:
+                class_name = detection.get('class', '')
+                
+                # Create Point object from detection
+                point = Point()
+                point.x = detection.get('x', 0.0)
+                point.y = detection.get('y', 0.0)
+                point.z = detection.get('z', 0.0)
+                
+                # Route to appropriate tracking variable
+                if class_name == 'gate':
+                    self.gate_coord = point
+                    self.last_gate_time = current_time
+                    
+        except json.JSONDecodeError as e:
+            self.get_logger().warn(f'Failed to parse YOLO JSON: {e}')
+        except (KeyError, TypeError) as e:
+            self.get_logger().warn(f'Error processing YOLO detections: {e}')
+
     def get_yaw(self):
         """Get current yaw from pose"""
         if self.current_pose is None:
@@ -146,25 +170,26 @@ class GuidedMove(Node):
         """Change state"""
         self.reset()
         self.initial_yaw = None
-        # Keep `target_coord`/`last_coord_time` so that tracking can continue smoothly when re-entering the tracking state.
-        self.last_target_x = None
-        self.last_target_change_time = None
+        self.previous_yaw_rate = 0.0  # Reset smooth tracking
+
+        self.close_to_gate = False
+        self.deadzone_gate = False
+
         self.prev_state = self.state
         self.state = new_state
         self.state_start_time = self.get_clock().now()
-        if new_state != self.prev_state:
-            if (new_state == 0):
+        
+        if new_state != self.prev_state or self.state == 1:
+            if (new_state == 1):
                 self.get_logger().info('Diving')
-            elif (new_state == 1):
-                self.get_logger().info('Scanning')
-                self.target_coord = None
             elif (new_state == 2):
                 self.get_logger().info('Moving forward')
             elif (new_state == 3):
                 self.get_logger().info('Performing U-turn')
             elif (new_state == 4):
-                self.get_logger().info('Tracking target')
-                self.last_coord_time = self.get_clock().now()
+                self.get_logger().info('Tracking gate')
+                self.last_gate_time = self.get_clock().now()  # Reset lost target timer when starting to track
+                self.gate_pid.reset()  # Reset PID state when starting to track
             elif (new_state == 5):
                 self.get_logger().info('Surfacing')
     
@@ -185,102 +210,67 @@ class GuidedMove(Node):
             z_velocity = max(-0.3, min(0.3, z_velocity))  # Limit velocity
             self.cmd.velocity.z = z_velocity
             
-    def track_target(self):
-        """Using PID for tracking target in x-axis (image coordinate)"""
-        if self.target_coord is not None:
-            target_x = self.target_coord.x
+    def track_gate(self):
+        if self.gate_coord is not None:
+            gate_x = self.gate_coord.x
+        else:
+            if self.last_gate_coord is None:
+                return
+            gate_x = self.last_gate_coord.x
             
-            # Deadzone to prevent oscillation near center
-            deadzone = 0.05
-            if abs(target_x) < deadzone:
-                target_x = 0.0
-            
-            # Compute desired yaw rate from PID
-            desired_yaw_rate = self.target_pid.compute(target_x)
-            desired_yaw_rate = max(-0.2, min(0.2, desired_yaw_rate))  # Limit yaw rate
-            
-            # Apply rate limiting for smooth acceleration
-            yaw_rate_diff = desired_yaw_rate - self.previous_yaw_rate
-            max_change = self.max_yaw_acceleration * 0.1  # 0.1s timer period
-            
-            if abs(yaw_rate_diff) > max_change:
-                yaw_rate = self.previous_yaw_rate + (max_change if yaw_rate_diff > 0 else -max_change)
-            else:
-                yaw_rate = desired_yaw_rate
-            
-            self.cmd.yaw_rate = yaw_rate
-            self.previous_yaw_rate = yaw_rate
-    
+        # Deadzone to prevent oscillation near center
+        deadzone = 0.05
+        if abs(gate_x) < deadzone:
+            gate_x = 0.0
+            self.gate_pid.integral = 0.0  # Reset integral term in deadzone to prevent windup
+            self.deadzone_gate = True
+        else:
+            self.deadzone_gate = False
+        
+        # Compute desired yaw rate from PID
+        desired_yaw_rate = self.gate_pid.compute(gate_x)
+        desired_yaw_rate = max(-0.2, min(0.2, desired_yaw_rate))  # Limit yaw rate
+        
+        # Apply rate limiting for smooth acceleration
+        yaw_rate_diff = desired_yaw_rate - self.previous_yaw_rate
+        max_change = self.max_yaw_acceleration * 0.1  # 0.1s timer period
+        
+        if abs(yaw_rate_diff) > max_change:
+            yaw_rate = self.previous_yaw_rate + (max_change if yaw_rate_diff > 0 else -max_change)
+        else:
+            yaw_rate = desired_yaw_rate
+        
+        self.cmd.yaw_rate = yaw_rate
+        self.previous_yaw_rate = yaw_rate
+
     def send_cmd(self):
         current_time = self.get_clock().now()
         
         # State machine logic
-        match self.state:
-            case -1:  # Idle
-                self.reset()
-                self.maintain_depth()
-                
-            case 0:  # Dive
+        match self.state:                
+            case 1: # Dive
                 self.maintain_depth()
                 if self.current_pose is not None and self.current_pose.pose.position.z < TARGET_DEPTH:
-                    self.change_state(1)
-                        
-            case 1: # Scan
-                self.maintain_depth()
-                
-                if self.current_pose is None:
-                    return
-                
-                if self.target_coord is not None:
-                    self.change_state(4)
-                    return
-                
-                current_yaw = self.get_yaw()
-                
-                if self.initial_yaw is None:
-                    self.initial_yaw = current_yaw
-                    target_deg = 90
-                    target_rad = math.radians(target_deg)
-                    self.target_yaw = self.normalize_angle(self.initial_yaw + target_rad)
-                
-                error = self.normalize_angle(self.target_yaw - current_yaw) # Count error of angle
-                
-                if abs(error) < math.radians(5.0): # Threshold for rotation complete (5 degrees)
-                    if self.rotate_state == 3:
-                        self.change_state(2)
-                        self.rotate_state = 0
-                    else:
-                        self.change_state(1)
-                        self.rotate_state += 1
-                
-                else:
-                    speed = ROTATE_SPEED
-                    
-                    if abs(error) < math.radians(30.0) and self.rotate_state == 3: # Slow down when close to the target using proportional control
-                        yaw_rate = error * 0.5
-                    else:
-                        yaw_rate = speed if error > 0 else -speed
-                    
-                    yaw_rate = max(-speed, min(speed, yaw_rate))
-                    self.rotate(yaw_rate)
+                    self.change_state(2)
                     
             case 2: # Forward
                 self.maintain_depth()
                 
-                if self.target_coord is not None and self.prev_state != 4 and self.prev_state != 3:
+                if self.gate_coord is not None and not self.forward_to_gate and self.prev_state != 3:
                     self.change_state(4)
                     return
                 
-                elapsed = (current_time - self.state_start_time).nanoseconds / 1e9
-                if elapsed < FORWARD_DURATION:
-                    self.forward(FORWARD_SPEED)
+                if (self.prev_state == 4 or self.prev_state == 3) and self.forward_to_gate:
+                    elapsed = (current_time - self.state_start_time).nanoseconds / 1e9
+                    if elapsed < FORWARD_DURATION_GATE:
+                        self.forward(FORWARD_SPEED_GATE)
+                    else:
+                        if self.prev_state == 3:
+                            self.change_state(5)
+                        else:
+                            self.change_state(3)
                 else:
-                    if self.prev_state == 1: 
-                        self.change_state(1)
-                    if self.prev_state == 4:
-                        self.change_state(3)
-                    elif self.prev_state == 3:
-                        self.change_state(5)
+                    self.forward(FORWARD_SPEED_SCAN)
 
             case 3: # u-turn
                 self.maintain_depth()
@@ -298,7 +288,7 @@ class GuidedMove(Node):
                 
                 error = self.normalize_angle(self.target_yaw - current_yaw)
                 
-                if abs(error) < math.radians(5.0): 
+                if abs(error) < math.radians(5.0):
                     self.change_state(2)
                     
                 else:
@@ -312,32 +302,36 @@ class GuidedMove(Node):
                     yaw_rate = max(-speed, min(speed, yaw_rate))
                     self.rotate(yaw_rate)
                     
-            case 4: # track
+            case 4: # track gate
                 self.maintain_depth()
                 
-                # Ensure we have a recent target update before using its timestamp
-                # if self.target_coord is None or self.last_coord_time is None:
-                #     self.get_logger().warn('Target is none')
-                #     self.change_state(1)
-                #     return
+                if self.gate_coord is not None:
+                    self.last_gate_coord = self.gate_coord
 
-                time_since_last_coord = (current_time - self.last_coord_time).nanoseconds / 1e9
-                if time_since_last_coord > 3.0:
-                    self.get_logger().warn(f'Lost target: {time_since_last_coord:.1f}s since last update')
-                    self.change_state(1)
-                    return
-                
-                if self.target_coord.z > 0.02:
+                time_since_last_gate_coord = (current_time - self.last_gate_time).nanoseconds / 1e9
+                if time_since_last_gate_coord > 3.0:
+                    self.get_logger().warn('Lost target for 3s')
+                    self.last_gate_coord = None
                     self.change_state(2)
                     return
                 
-                self.track_target()
-                self.forward(FORWARD_SPEED)
+                if self.close_to_gate:
+                    if self.deadzone_gate:
+                        self.get_logger().info('Close to gate and centered, moving forward')
+                        self.forward_to_gate = True
+                        self.change_state(2)
+                else:
+                    self.forward(FORWARD_SPEED_SCAN)
+                    if self.gate_coord is not None and self.gate_coord.z > 0.15:
+                        self.close_to_gate = True
+                        self.reset()
+
+                self.track_gate()
                     
             case 5: # surface
                 self.surface()
                 
-        
+                
         # Set header timestamp
         self.cmd.header.stamp = current_time.to_msg()
         self.cmd.header.frame_id = 'base_link'
