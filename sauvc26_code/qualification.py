@@ -16,7 +16,15 @@ ROTATE_SPEED = 1.0 # rad/s
 FORWARD_SPEED_SCAN = 0.7 # m/s
 FORWARD_SPEED_GATE = 0.7 # m/s
 FORWARD_DURATION_GATE = 7.0 # s
-TARGET_DEPTH = -0.3 # m
+
+KP_DEPTH = 0.5
+KI_DEPTH = 0.1
+KD_DEPTH = 0.2
+TARGET_DEPTH = -0.3
+
+KP_GATE = 0.5
+KI_GATE = 0.1
+KD_GATE = 0.2
 
 class GuidedMove(Node):
     def __init__(self):
@@ -62,8 +70,8 @@ class GuidedMove(Node):
         )
                 
         # PID controller
-        self.depth_pid = PID(kp=0.5, ki=0.1, kd=0.2, setpoint=TARGET_DEPTH)
-        self.gate_pid = PID(kp=0.5, ki=0.1, kd=0.2, setpoint=0.0)
+        self.depth_pid = PID(kp=KP_DEPTH, ki=KI_DEPTH, kd=KD_DEPTH, setpoint=TARGET_DEPTH)
+        self.gate_pid = PID(kp=KP_GATE, ki=KI_GATE, kd=KD_GATE, setpoint=0.0)
         
         # Timer for publish velocity commands (10 Hz)
         self.timer = self.create_timer(0.1, self.send_cmd)
