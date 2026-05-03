@@ -32,7 +32,7 @@ class YoloDetector(Node):
         self.coord_publisher_ = self.create_publisher(String, '/yolo_target_coord', 10)
 
         self.bridge = CvBridge()
-        self.model = YOLO("final_test.pt")
+        self.model = YOLO("final_real_rpi5_sweep-1.pt")
         self.get_logger().info("YOLO Node Initialized. Publishing Image and Coordinates.")
 
     def listener_callback(self, msg):
@@ -41,7 +41,7 @@ class YoloDetector(Node):
             img_height, img_width = cv_image.shape[:2]
             
             # Run Inference
-            results = self.model(cv_image, verbose=False, conf=0.75)
+            results = self.model(cv_image, verbose=False, conf=0.1)
             annotated_frame = results[0].plot()
 
             det_count = len(results[0].boxes)
