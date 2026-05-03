@@ -69,7 +69,27 @@ class Testing(Node):
         self.timer_count += 1
         elapsed_seconds = self.timer_count * 0.1
         self.get_logger().info(f'Elapsed time: {elapsed_seconds:.1f} seconds')
-        if elapsed_seconds >= 4.0:
+        
+        # Urutan waktu ditambah untuk Sway, U-Turn, dan Surface
+        if elapsed_seconds >= 16.0:
+            self.get_logger().info('Surface (Naik ke permukaan)')
+            self.cmd.linear.y = 0.0
+            self.cmd.angular.z = 0.0
+            self.cmd.linear.z = 0.3  # Surface
+            
+        elif elapsed_seconds >= 12.0:
+            self.get_logger().info('U-Turn')
+            self.cmd.linear.y = 0.0
+            self.cmd.linear.z = 0.0
+            self.cmd.angular.z = 0.6  # U-Turn
+            
+        elif elapsed_seconds >= 8.0:
+            self.get_logger().info('Sway')
+            self.cmd.linear.z = 0.0
+            self.cmd.angular.z = 0.0
+            self.cmd.linear.y = -0.5  # Sway (Geser samping)
+            
+        elif elapsed_seconds >= 4.0:
             self.get_logger().info('Rotating AUV')
             self.cmd.linear.z = 0.0
             self.cmd.angular.z = 0.3  # putar
